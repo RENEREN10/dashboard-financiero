@@ -19,7 +19,7 @@ import type { Lang, MonedaEfectiva, Perfil, Prefs, Theme, Transaction, Vista } f
 import { getTranslation, type Translation } from '../i18n/translations';
 import { mockTransactions } from '../data/mockData';
 import { resolverMoneda } from '../services/format';
-import { apiActualizarCliente, apiEliminarCliente, apiRestaurar, getTransactions } from '../services/api';
+import { apiActualizarCliente, apiEliminarCliente, apiRestaurar, getTransactionsRaw } from '../services/api';
 
 interface AppContextValue {
   lang: Lang;
@@ -138,12 +138,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('findash-theme', theme);
   }, [theme]);
 
-  // Sincroniza transacciones con el backend al arrancar (si está prendido).
-  // Si el API responde, manda esa data; si no, se queda el mock/localStorage.
+  // Sincroniza transacciones con el backend al arrancar SOLO si responde.
+  // Si el API falla/duerme (Render free), se conserva el localStorage
+  // con tus ediciones en vez de pisarlo con el mock original.
   useEffect(() => {
     let vivo = true;
-    getTransactions().then((txs) => {
-      if (!vivo || !Array.isArray(txs) || txs.length === 0) return;
+    getTransactionsRaw().then(({ data: txs, fromBackend }) => {
+      if (!vivo || !fromBackend || !Array.isArray(txs) || txs.length === 0) return;
       const actual = localStorage.getItem('findash-transacciones');
       // Solo pisa el caché si el backend trae algo distinto (evita loops)
       if (actual !== JSON.stringify(txs)) {
@@ -207,10 +208,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const restaurarTransacciones = useCallback(() => {
     setTransaccionesState(mockTransactions);
     localStorage.removeItem('findash-transacciones');
-    // Restaura también el db.json del backend y re-sincroniza
-    void apiRestaurar().then(() => {
-      void getTransactions().then((txs) => {
-        if (Array.isArray(txs) && txs.length > 0) {
+    // Restaura también el db.json del backend y re-sincroniza SOLO si confirmó
+    void apiRestaurar().then((ok) => {
+      if (!ok) return;
+      void getTransactionsRaw().then(({ data: txs, fromBackend }) => {
+        if (fromBackend && Array.isArray(txs) && txs.length > 0) {
           setTransaccionesState(txs);
           localStorage.setItem('findash-transacciones', JSON.stringify(txs));
         }
